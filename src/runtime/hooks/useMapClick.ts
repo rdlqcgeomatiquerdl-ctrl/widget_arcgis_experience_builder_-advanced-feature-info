@@ -1,10 +1,14 @@
-import { React, getAppStore } from "jimu-core"
+import { React } from "jimu-core"
 import type { JimuMapView } from "jimu-arcgis"
 import type GraphicsLayer from "@arcgis/core/layers/GraphicsLayer"
 import Extent from "@arcgis/core/geometry/Extent"
 
 import type { UnifiedGeometryInput } from "../types"
 import { showFeaturePoint } from "../utils/mapGraphics"
+import {
+  deduplicateGraphics,
+  resolvePopupTemplate,
+} from "../services/featureRetrieval"
 
 const { useEffect, useRef } = React
 
@@ -13,16 +17,19 @@ export const useMapClick = (
   markerLayer: GraphicsLayer | undefined,
   clearMessageInput: () => void,
   onGeometryInput: (input: UnifiedGeometryInput) => Promise<void>,
+  onFeaturesFound?: (graphics: any[]) => void,
 ) => {
   // Keep the latest callbacks without recreating the map click listener
   const callbacksRef = useRef({
     clearMessageInput,
     onGeometryInput,
+    onFeaturesFound,
   })
 
   callbacksRef.current = {
     clearMessageInput,
     onGeometryInput,
+    onFeaturesFound,
   }
 
   useEffect(() => {
@@ -34,19 +41,45 @@ export const useMapClick = (
       // Ignore clicks while the map is moving
       if (view.stationary === false) return
 
-      // Ignore clicks if another tool (e.g. Select tool drawing rectangle/lasso, Draw, Measure) is controlling the map
-      try {
-        const mapWidgetId = jimuMapView.mapWidgetId
-        const state = (getAppStore()?.getState() as any)
-        const autoControlId = state?.mapWidgetsInfo?.[mapWidgetId]?.autoControlWidgetId
-        if (autoControlId) return
-      } catch {
-        // Fallback: continue
-      }
-
       // Display the clicked location
       showFeaturePoint(markerLayer, event.mapPoint, view)
       callbacksRef.current.clearMessageInput()
+
+      // 1. Try fast view.hitTest first (immediate client-side feature detection)
+      try {
+        const hit = await view.hitTest(event)
+        const hitGraphics: any[] = []
+        if (hit?.results?.length) {
+          hit.results.forEach((res: any) => {
+            const g = res.graphic
+            const l = res.layer || g?.layer
+            if (
+              g &&
+              l &&
+              l !== markerLayer &&
+              l.id !== "feature-info-multi-marker" &&
+              l.id !== "feature-info-multi-selection" &&
+              l.type !== "graphics"
+            ) {
+              g.layer = l
+              g.sourceLayer = l
+              g.popupTemplate = resolvePopupTemplate(
+                l,
+                undefined,
+                g.attributes,
+              )
+              hitGraphics.push(g)
+            }
+          })
+        }
+        if (hitGraphics.length > 0 && callbacksRef.current.onFeaturesFound) {
+          const deduplicated = deduplicateGraphics(hitGraphics)
+          callbacksRef.current.onFeaturesFound(deduplicated)
+          return
+        }
+      } catch (err) {
+        console.warn("hitTest error, falling back to spatial retrieval:", err)
+      }
 
       // Create a small rectangle around the click
       const CLICK_BUFFER = 8

@@ -14,6 +14,7 @@ import { processFeatureInput } from "./services/featureInputProcessor"
 import {
   deduplicateGraphics,
   extractDirectGraphicsFromRecords,
+  resolvePopupTemplate,
 } from "./services/featureRetrieval"
 import {
   DEFAULT_SELECTION_COLOR,
@@ -221,8 +222,72 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     setSelectionEnabled(!selectionEnabled)
   }
 
-  // Map clicks use the hit rectangle to retrieve overlapping popup features.
-  useMapClick(jimuMapView, markerLayer, resetMessageInput, handleUnifiedGeometryInput)
+  const handleDirectFeaturesFound = (graphics: any[]) => {
+    ++requestSequenceRef.current
+    activeInputRef.current = null
+    lastQueryGeometriesRef.current = []
+    updateFeatureResults(graphics)
+    if (graphics.length > 0) {
+      setAncestorSidebarsOpen(props.id, true, sidebarWidgetIdRef.current)
+    }
+  }
+
+  // Map clicks use fast hitTest or geometry intersection to retrieve popup features.
+  useMapClick(
+    jimuMapView,
+    markerLayer,
+    resetMessageInput,
+    handleUnifiedGeometryInput,
+    handleDirectFeaturesFound,
+  )
+
+  // Automatically listen to map selections made via Rectangle, Lasso, Point, or the Select widget
+  useEffect(() => {
+    if (!jimuMapView) return
+
+    let isSubscribed = true
+    const handleMapSelection = async () => {
+      try {
+        if (typeof (jimuMapView as any).getSelectedFeatures === "function") {
+          const selected = await (jimuMapView as any).getSelectedFeatures()
+          if (!isSubscribed) return
+          if (selected && selected.length > 0) {
+            const formatted = selected.map((g: any) => {
+              const layer = g.layer || g.sourceLayer
+              g.popupTemplate = resolvePopupTemplate(
+                layer,
+                undefined,
+                g.attributes,
+              )
+              return g
+            })
+            const deduplicated = deduplicateGraphics(formatted)
+            updateFeatureResults(deduplicated)
+            setAncestorSidebarsOpen(props.id, true, sidebarWidgetIdRef.current)
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to get map selected features:", err)
+      }
+    }
+
+    let listenerHandle: any = null
+    if (
+      typeof (jimuMapView as any).addJimuLayerViewSelectedFeaturesChangeListener ===
+      "function"
+    ) {
+      listenerHandle = (
+        jimuMapView as any
+      ).addJimuLayerViewSelectedFeaturesChangeListener(() => {
+        void handleMapSelection()
+      })
+    }
+
+    return () => {
+      isSubscribed = false
+      listenerHandle?.remove?.()
+    }
+  }, [jimuMapView, props.id])
 
   // Every compatible widget publishes the same selection/clear message payload.
   useEffect(() => {

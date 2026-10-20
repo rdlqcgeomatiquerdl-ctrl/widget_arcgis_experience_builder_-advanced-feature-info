@@ -6,7 +6,7 @@ import type { JimuMapView } from "jimu-arcgis";
 const normalizeUrl = (url?: string): string =>
   (url ?? "").trim().replace(/\/+$/, "").toLowerCase();
 
-const resolvePopupTemplate = (layer: any, dsLayer?: any, attributes?: any): any => {
+export const resolvePopupTemplate = (layer: any, dsLayer?: any, attributes?: any): any => {
   const existing =
     layer?.popupTemplate ||
     layer?.defaultPopupTemplate ||
