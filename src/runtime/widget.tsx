@@ -246,10 +246,23 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     if (!jimuMapView) return
 
     let isSubscribed = true
+    let debounceTimer: any = null
+
     const handleMapSelection = async () => {
       try {
-        if (typeof (jimuMapView as any).getSelectedFeatures === "function") {
-          const selected = await (jimuMapView as any).getSelectedFeatures()
+        const jmv = jimuMapView as any
+        const count =
+          typeof jmv.getSelectedFeatureCount === "function"
+            ? jmv.getSelectedFeatureCount()
+            : -1
+
+        // Fast path: if no features are selected, avoid launching heavy queries across all layers
+        if (count === 0) {
+          return
+        }
+
+        if (typeof jmv.getSelectedFeatures === "function") {
+          const selected = await jmv.getSelectedFeatures()
           if (!isSubscribed) return
           if (selected && selected.length > 0) {
             const formatted = selected.map((g: any) => {
@@ -279,12 +292,16 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
       listenerHandle = (
         jimuMapView as any
       ).addJimuLayerViewSelectedFeaturesChangeListener(() => {
-        void handleMapSelection()
+        if (debounceTimer) clearTimeout(debounceTimer)
+        debounceTimer = setTimeout(() => {
+          void handleMapSelection()
+        }, 150)
       })
     }
 
     return () => {
       isSubscribed = false
+      if (debounceTimer) clearTimeout(debounceTimer)
       listenerHandle?.remove?.()
     }
   }, [jimuMapView, props.id])
