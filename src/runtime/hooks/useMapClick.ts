@@ -1,4 +1,4 @@
-import { React } from "jimu-core"
+import { React, getAppStore } from "jimu-core"
 import type { JimuMapView } from "jimu-arcgis"
 import type GraphicsLayer from "@arcgis/core/layers/GraphicsLayer"
 import Extent from "@arcgis/core/geometry/Extent"
@@ -33,6 +33,16 @@ export const useMapClick = (
     const handle = view.on("click", async (event: any) => {
       // Ignore clicks while the map is moving
       if (view.stationary === false) return
+
+      // Ignore clicks if another tool (e.g. Select tool drawing rectangle/lasso, Draw, Measure) is controlling the map
+      try {
+        const mapWidgetId = jimuMapView.mapWidgetId
+        const state = (getAppStore()?.getState() as any)
+        const autoControlId = state?.mapWidgetsInfo?.[mapWidgetId]?.autoControlWidgetId
+        if (autoControlId) return
+      } catch {
+        // Fallback: continue
+      }
 
       // Display the clicked location
       showFeaturePoint(markerLayer, event.mapPoint, view)

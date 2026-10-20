@@ -64,51 +64,15 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   const messageInput = busInput ?? storeInput
 
-  // Subscribe to selection bus AND automatically intercept MessageManager selection changes
-  // so the widget reacts to Select/Query/Search even if the user didn't configure the Action tab!
+  // Subscribe to selection bus when Message Action executes
   useEffect(() => {
     const unsubscribe = subscribeWidgetSelection(props.id, (input) => {
       setBusInput(input)
     })
-
-    const mm = MessageManager.getInstance() as any
-    if (mm && typeof mm.publishMessage === "function") {
-      if (!mm.__afiPatched) {
-        const origPublish = mm.publishMessage.bind(mm)
-        mm.__afiListeners = new Map<string, (msg: any) => void>()
-        mm.publishMessage = function (message: any) {
-          if (message?.type === MessageType.DataRecordsSelectionChange) {
-            mm.__afiListeners.forEach((listener: (msg: any) => void) => {
-              try {
-                listener(message)
-              } catch (e) {
-                console.warn(e)
-              }
-            })
-          }
-          return origPublish(message)
-        }
-        mm.__afiPatched = true
-      }
-
-      mm.__afiListeners?.set(props.id, (message: any) => {
-        void handleSelectionMessageForWidget(props.id, message)
-      })
-    }
-
     return () => {
       unsubscribe()
-      const mmInst = MessageManager.getInstance() as any
-      mmInst?.__afiListeners?.delete(props.id)
     }
   }, [props.id])
-
-  // Close target sidebar by default on initial mount if no selection is active
-  useEffect(() => {
-    if (!messageInput || messageInput.kind === "clear") {
-      setAncestorSidebarsOpen(props.id, false, sidebarWidgetIdRef.current)
-    }
-  }, [props.id, sidebarWidgetId])
 
   // Refresh map highlight colors immediately when selectionColor is changed in Settings
   useEffect(() => {
@@ -217,41 +181,6 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   const activeViewChangeHandler = (jmv: JimuMapView) => {
     if (jmv) setJimuMapView(jmv)
   }
-
-  // Preserve the widget's custom feature-highlighting behavior (compatible with both JS API 4.28 highlightOptions and 4.30+/5.x highlights).
-  useEffect(() => {
-    const view = jimuMapView?.view as any
-    if (!view) return
-
-    if (view.highlights && typeof view.highlights.find === "function") {
-      const defaultHighlight = view.highlights.find(
-        (highlight: any) => highlight.name === "default",
-      )
-      if (!defaultHighlight) return
-
-      const originalHaloOpacity = defaultHighlight.haloOpacity
-      const originalFillOpacity = defaultHighlight.fillOpacity
-      defaultHighlight.haloOpacity = 0
-      defaultHighlight.fillOpacity = 0
-
-      return () => {
-        defaultHighlight.haloOpacity = originalHaloOpacity
-        defaultHighlight.fillOpacity = originalFillOpacity
-      }
-    } else if (view.highlightOptions) {
-      const originalHaloOpacity = view.highlightOptions.haloOpacity
-      const originalFillOpacity = view.highlightOptions.fillOpacity
-      view.highlightOptions.haloOpacity = 0
-      view.highlightOptions.fillOpacity = 0
-
-      return () => {
-        if (view.highlightOptions) {
-          view.highlightOptions.haloOpacity = originalHaloOpacity
-          view.highlightOptions.fillOpacity = originalFillOpacity
-        }
-      }
-    }
-  }, [jimuMapView])
 
   const handleBlockClick = async (graphic: any) => {
     if (!selectionEnabled || !jimuMapView?.view || !selectionLayer || !graphic?.geometry) return
