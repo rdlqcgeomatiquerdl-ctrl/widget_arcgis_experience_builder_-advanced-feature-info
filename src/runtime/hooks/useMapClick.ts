@@ -1,6 +1,7 @@
 import { React } from "jimu-core"
 import type { JimuMapView } from "jimu-arcgis"
-import type GraphicsLayer from "@arcgis/core/layers/GraphicsLayer.js"
+import type GraphicsLayer from "@arcgis/core/layers/GraphicsLayer"
+import Extent from "@arcgis/core/geometry/Extent"
 
 import type { UnifiedGeometryInput } from "../types"
 import { showFeaturePoint } from "../utils/mapGraphics"
@@ -31,14 +32,11 @@ export const useMapClick = (
 
     const handle = view.on("click", async (event: any) => {
       // Ignore clicks while the map is moving
-      if (!view.stationary) return
+      if (view.stationary === false) return
 
       // Display the clicked location
       showFeaturePoint(markerLayer, event.mapPoint, view)
       callbacksRef.current.clearMessageInput()
-
-      // Preserve the existing map component availability check
-      if (!jimuMapView.mapComponent) return
 
       // Create a small rectangle around the click
       const CLICK_BUFFER = 8
@@ -50,10 +48,34 @@ export const useMapClick = (
         height: CLICK_BUFFER * 2,
       }
 
+      // Compute map-space extent for tolerance when mapComponent.fetchPopupFeatures is unavailable (ArcGIS Enterprise 11.x)
+      let clickGeometry: any = event.mapPoint
+      try {
+        const p1 = view.toMap({
+          x: event.screenPoint.x - CLICK_BUFFER,
+          y: event.screenPoint.y + CLICK_BUFFER,
+        })
+        const p2 = view.toMap({
+          x: event.screenPoint.x + CLICK_BUFFER,
+          y: event.screenPoint.y - CLICK_BUFFER,
+        })
+        if (p1 && p2) {
+          clickGeometry = new Extent({
+            xmin: Math.min(p1.x, p2.x),
+            ymin: Math.min(p1.y, p2.y),
+            xmax: Math.max(p1.x, p2.x),
+            ymax: Math.max(p1.y, p2.y),
+            spatialReference: view.spatialReference,
+          })
+        }
+      } catch {
+        clickGeometry = event.mapPoint
+      }
+
       // Convert the map click into a unified geometry input
       const input: UnifiedGeometryInput = {
         origin: "map-click",
-        geometries: [event.mapPoint],
+        geometries: [clickGeometry || event.mapPoint],
         retrievalMethod: "popup",
         hitTarget,
         pointerType: event.pointerType,

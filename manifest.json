@@ -13,8 +13,13 @@
     "hasSettingPage": true,
     "hasConfig": true
   },
-  "dependency": ["jimu-arcgis"],
-  "translatedLocales": ["fr", "en"],
+  "dependency": [
+    "jimu-arcgis"
+  ],
+  "translatedLocales": [
+    "fr",
+    "en"
+  ],
   "defaultSize": {
     "width": 400,
     "height": 300

@@ -1,7 +1,13 @@
 /** @jsxRuntime classic */
 /** @jsx React.createElement */
 /** @jsxFrag React.Fragment */
-import { React, type AllWidgetProps, MutableStoreManager } from "jimu-core"
+import {
+  React,
+  type AllWidgetProps,
+  MessageManager,
+  MessageType,
+  MutableStoreManager,
+} from "jimu-core"
 import { JimuMapViewComponent, type JimuMapView } from "jimu-arcgis"
 
 import { processFeatureInput } from "./services/featureInputProcessor"
@@ -15,6 +21,10 @@ import {
   showInputGeometries,
 } from "./utils/mapGraphics"
 import { setAncestorSidebarsOpen } from "./utils/sidebarUtils"
+import {
+  handleSelectionMessageForWidget,
+  subscribeWidgetSelection,
+} from "./utils/selectionMessageBus"
 import { useMapGraphics } from "./hooks/useMapGraphics"
 import { useMapClick } from "./hooks/useMapClick"
 import FeatureResultsPanel from "./components/FeatureResultsPanel"
@@ -34,6 +44,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   const [popupFeatures, setPopupFeatures] = useState<any[]>([])
   const [selectedGraphic, setSelectedGraphic] = useState<any>(null)
   const [selectionEnabled, setSelectionEnabled] = useState(false)
+  const [busInput, setBusInput] = useState<WidgetSelectionInput | null>(null)
 
   const selectionColor = props.config?.selectionColor || DEFAULT_SELECTION_COLOR
   const selectionColorRef = useRef(selectionColor)
@@ -47,9 +58,50 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   const activeInputRef = useRef<ActiveInput | null>(null)
   const lastQueryGeometriesRef = useRef<any[]>([])
 
-  const messageInput = (props.mutableStateProps?.widgetInput ??
+  const storeInput = (props.mutableStateProps?.widgetInput ??
     MutableStoreManager.getInstance().getStateValue([props.id, "widgetInput"])) as
     | WidgetSelectionInput | null | undefined
+
+  const messageInput = busInput ?? storeInput
+
+  // Subscribe to selection bus AND automatically intercept MessageManager selection changes
+  // so the widget reacts to Select/Query/Search even if the user didn't configure the Action tab!
+  useEffect(() => {
+    const unsubscribe = subscribeWidgetSelection(props.id, (input) => {
+      setBusInput(input)
+    })
+
+    const mm = MessageManager.getInstance() as any
+    if (mm && typeof mm.publishMessage === "function") {
+      if (!mm.__afiPatched) {
+        const origPublish = mm.publishMessage.bind(mm)
+        mm.__afiListeners = new Map<string, (msg: any) => void>()
+        mm.publishMessage = function (message: any) {
+          if (message?.type === MessageType.DataRecordsSelectionChange) {
+            mm.__afiListeners.forEach((listener: (msg: any) => void) => {
+              try {
+                listener(message)
+              } catch (e) {
+                console.warn(e)
+              }
+            })
+          }
+          return origPublish(message)
+        }
+        mm.__afiPatched = true
+      }
+
+      mm.__afiListeners?.set(props.id, (message: any) => {
+        void handleSelectionMessageForWidget(props.id, message)
+      })
+    }
+
+    return () => {
+      unsubscribe()
+      const mmInst = MessageManager.getInstance() as any
+      mmInst?.__afiListeners?.delete(props.id)
+    }
+  }, [props.id])
 
   // Close target sidebar by default on initial mount if no selection is active
   useEffect(() => {
@@ -81,6 +133,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
 
   // Clear only our stored message; we do not reset another widget's UI.
   const resetMessageInput = () => {
+    setBusInput(null)
     MutableStoreManager.getInstance().updateStateValue(props.id, "widgetInput", null)
   }
 
@@ -165,22 +218,38 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
     if (jmv) setJimuMapView(jmv)
   }
 
-  // Preserve the widget's custom feature-highlighting behavior.
+  // Preserve the widget's custom feature-highlighting behavior (compatible with both JS API 4.28 highlightOptions and 4.30+/5.x highlights).
   useEffect(() => {
-    if (!jimuMapView?.view) return
-    const defaultHighlight = jimuMapView.view.highlights.find(
-      (highlight: any) => highlight.name === "default",
-    )
-    if (!defaultHighlight) return
+    const view = jimuMapView?.view as any
+    if (!view) return
 
-    const originalHaloOpacity = defaultHighlight.haloOpacity
-    const originalFillOpacity = defaultHighlight.fillOpacity
-    defaultHighlight.haloOpacity = 0
-    defaultHighlight.fillOpacity = 0
+    if (view.highlights && typeof view.highlights.find === "function") {
+      const defaultHighlight = view.highlights.find(
+        (highlight: any) => highlight.name === "default",
+      )
+      if (!defaultHighlight) return
 
-    return () => {
-      defaultHighlight.haloOpacity = originalHaloOpacity
-      defaultHighlight.fillOpacity = originalFillOpacity
+      const originalHaloOpacity = defaultHighlight.haloOpacity
+      const originalFillOpacity = defaultHighlight.fillOpacity
+      defaultHighlight.haloOpacity = 0
+      defaultHighlight.fillOpacity = 0
+
+      return () => {
+        defaultHighlight.haloOpacity = originalHaloOpacity
+        defaultHighlight.fillOpacity = originalFillOpacity
+      }
+    } else if (view.highlightOptions) {
+      const originalHaloOpacity = view.highlightOptions.haloOpacity
+      const originalFillOpacity = view.highlightOptions.fillOpacity
+      view.highlightOptions.haloOpacity = 0
+      view.highlightOptions.fillOpacity = 0
+
+      return () => {
+        if (view.highlightOptions) {
+          view.highlightOptions.haloOpacity = originalHaloOpacity
+          view.highlightOptions.fillOpacity = originalFillOpacity
+        }
+      }
     }
   }, [jimuMapView])
 
@@ -254,7 +323,7 @@ const Widget = (props: AllWidgetProps<IMConfig>) => {
   }, [jimuMapView?.view, markerLayer, messageInput])
 
   return (
-    <div className="jimu-widget">
+    <div className="jimu-widget" style={{ width: "100%", height: "100%" }}>
       {props.useMapWidgetIds?.length === 1 && (
         <JimuMapViewComponent
           useMapWidgetId={props.useMapWidgetIds[0]}

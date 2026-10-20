@@ -6,6 +6,44 @@ import type { JimuMapView } from "jimu-arcgis";
 const normalizeUrl = (url?: string): string =>
   (url ?? "").trim().replace(/\/+$/, "").toLowerCase();
 
+const resolvePopupTemplate = (layer: any, dsLayer?: any, attributes?: any): any => {
+  const existing =
+    layer?.popupTemplate ||
+    layer?.defaultPopupTemplate ||
+    dsLayer?.popupTemplate ||
+    dsLayer?.defaultPopupTemplate;
+  if (existing) return existing;
+
+  if (typeof layer?.createPopupTemplate === "function") {
+    try {
+      const created = layer.createPopupTemplate();
+      if (created) return created;
+    } catch {
+      // Fallback below
+    }
+  }
+
+  if (typeof dsLayer?.createPopupTemplate === "function") {
+    try {
+      const created = dsLayer.createPopupTemplate();
+      if (created) return created;
+    } catch {
+      // Fallback below
+    }
+  }
+
+  const fieldInfos = Object.keys(attributes ?? {}).map((fieldName) => ({
+    fieldName,
+    label: fieldName,
+    visible: true,
+  }));
+
+  return {
+    title: layer?.title || dsLayer?.title || "Entité",
+    content: [{ type: "fields", fieldInfos }],
+  };
+};
+
 // Check if a layer/sublayer and all its ancestors are visible and within current map scale
 export const isLayerVisibleAtScale = (layer: any, scale: number): boolean => {
   let current = layer;
@@ -52,7 +90,7 @@ export const deduplicateGraphics = (graphics: any[]): any[] => {
       continue;
     }
 
-    const layerKey = layer.id ?? layer.url ?? layer;
+    const layerKey = layer.id ?? layer.url ?? layer.title ?? layer;
     if (!seen.has(layerKey)) {
       seen.set(layerKey, new Set());
     }
@@ -98,7 +136,7 @@ export const extractDirectGraphicsFromRecords = (
     }
 
     const targetUrl = normalizeUrl(ds.url || mainDs?.url);
-    if (!targetUrl) return null;
+    if (!targetUrl) return ds.layer ?? null;
 
     for (const layer of allLayers as any[]) {
       if (layer.type === "feature" && normalizeUrl(layer.url) === targetUrl) {
@@ -126,12 +164,13 @@ export const extractDirectGraphicsFromRecords = (
   for (const record of records) {
     if (!record) continue;
     const ds = record.dataSource;
-    const layer = findMapLayerForDataSource(ds);
-    const popupTemplate =
-      layer?.popupTemplate ||
-      layer?.defaultPopupTemplate ||
-      ds?.layer?.popupTemplate ||
-      ds?.layer?.defaultPopupTemplate;
+    const mapLayer = findMapLayerForDataSource(ds);
+    const layer =
+      mapLayer ??
+      ds?.layer ?? {
+        id: ds?.id || "selection-layer",
+        title: ds?.getLabel?.() || ds?.layerDefinition?.name || "Entité",
+      };
 
     if (layer && layer.popupEnabled === false) continue;
 
@@ -171,6 +210,8 @@ export const extractDirectGraphicsFromRecords = (
         ? { ...record.getData() }
         : {};
 
+    const popupTemplate = resolvePopupTemplate(mapLayer, ds?.layer, attributes);
+
     const graphic =
       rawFeature?.declaredClass === "esri.Graphic" && typeof rawFeature.clone === "function"
         ? rawFeature.clone()
@@ -182,17 +223,11 @@ export const extractDirectGraphicsFromRecords = (
     if (geometry && !graphic.geometry) {
       graphic.geometry = geometry;
     }
-    if (layer) {
-      graphic.layer = layer;
-      (graphic as any).sourceLayer = layer;
-    }
-    if (popupTemplate) {
-      graphic.popupTemplate = popupTemplate;
-    }
+    graphic.layer = layer;
+    (graphic as any).sourceLayer = layer;
+    graphic.popupTemplate = popupTemplate;
 
-    if (graphic.layer && graphic.popupTemplate) {
-      directGraphics.push(graphic);
-    }
+    directGraphics.push(graphic);
   }
 
   return deduplicateGraphics(directGraphics);
@@ -204,35 +239,46 @@ export const retrievePopupFeatures = async (
   hitTarget: any,
   pointerType: any = "mouse",
   onProgress?: (graphics: any[]) => void,
+  view?: any,
+  fallbackGeometry?: any,
 ): Promise<any[]> => {
+  const activeView = view ?? mapComponent;
+
   if (typeof mapComponent?.fetchPopupFeatures === "function") {
-    const graphicGenerator = await mapComponent.fetchPopupFeatures(hitTarget, {
-      pointerType,
-    });
+    try {
+      const graphicGenerator = await mapComponent.fetchPopupFeatures(hitTarget, {
+        pointerType,
+      });
 
-    const graphics: any[] = [];
+      const graphics: any[] = [];
 
-    for await (const graphic of graphicGenerator) {
-      graphics.push(graphic);
-      onProgress?.(graphics.slice());
+      for await (const graphic of graphicGenerator) {
+        graphics.push(graphic);
+        onProgress?.(graphics.slice());
+      }
+
+      if (graphics.length > 0) {
+        return graphics;
+      }
+    } catch (err) {
+      console.warn("fetchPopupFeatures fallback to spatial query:", err);
     }
-
-    return graphics;
   }
 
-  if (typeof mapComponent?.popup?.fetchFeatures === "function") {
-    const response = await mapComponent.popup.fetchFeatures(hitTarget);
-    const graphics = (await response?.allGraphicsPromise) ?? [];
-    if (graphics.length > 0) {
-      onProgress?.(graphics);
-    }
-    return graphics;
+  if (activeView && fallbackGeometry) {
+    return retrieveSpatialFeatures(activeView, fallbackGeometry, onProgress);
   }
 
-  if (typeof mapComponent?.toMap === "function") {
-    const mapPoint = mapComponent.toMap(hitTarget);
-    if (mapPoint) {
-      return retrieveSpatialFeatures(mapComponent, mapPoint, onProgress);
+  if (typeof activeView?.popup?.fetchFeatures === "function") {
+    try {
+      const response = await activeView.popup.fetchFeatures(hitTarget);
+      const graphics = (await response?.allGraphicsPromise) ?? [];
+      if (graphics.length > 0) {
+        onProgress?.(graphics);
+      }
+      return graphics;
+    } catch (err) {
+      console.warn("popup.fetchFeatures fallback error:", err);
     }
   }
 
@@ -280,7 +326,7 @@ export const retrieveSpatialFeatures = async (
     if (topLv?.suspended) continue;
 
     if (layer.type === "feature") {
-      if (layer.popupEnabled !== false && (layer.popupTemplate || layer.defaultPopupTemplate)) {
+      if (layer.popupEnabled !== false) {
         queryLayers.push(layer);
       }
     }
@@ -295,8 +341,7 @@ export const retrieveSpatialFeatures = async (
           if (
             isLayerVisibleAtScale(sublayer, currentScale) &&
             (sublayer.sublayers?.length ?? 0) === 0 &&
-            sublayer.popupEnabled !== false &&
-            (sublayer.popupTemplate || sublayer.defaultPopupTemplate)
+            sublayer.popupEnabled !== false
           ) {
             queryLayers.push(sublayer);
           }
@@ -313,6 +358,9 @@ export const retrieveSpatialFeatures = async (
   await Promise.all(
     queryLayers.map(async (layer) => {
       try {
+        if (typeof layer.createQuery !== "function" || typeof layer.queryFeatures !== "function") {
+          return;
+        }
         const query = layer.createQuery();
         query.geometry = queryGeometry;
         query.spatialRelationship = "intersects";
@@ -346,7 +394,7 @@ export const retrieveSpatialFeatures = async (
         const layerGraphics = (featureSet?.features ?? []).map((graphic: any) => {
           graphic.layer = layer;
           (graphic as any).sourceLayer = layer;
-          graphic.popupTemplate = layer.popupTemplate || layer.defaultPopupTemplate;
+          graphic.popupTemplate = resolvePopupTemplate(layer, undefined, graphic.attributes);
           return graphic;
         });
 

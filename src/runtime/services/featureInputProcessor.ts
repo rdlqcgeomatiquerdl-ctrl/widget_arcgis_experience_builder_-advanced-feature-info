@@ -1,6 +1,6 @@
 import type { JimuMapView } from "jimu-arcgis"
-import type Graphic from "@arcgis/core/Graphic.js"
-import type Geometry from "@arcgis/core/geometry/Geometry.js"
+import type Graphic from "@arcgis/core/Graphic"
+import type Geometry from "@arcgis/core/geometry/Geometry"
 
 import type { UnifiedGeometryInput } from "../types"
 import { retrievePopupFeatures } from "./featureRetrieval"
@@ -21,15 +21,13 @@ export const processFeatureInput = async (
   }
 
   if (input.retrievalMethod === "popup") {
-    if (!jimuMapView.mapComponent) {
-      return { graphics: [], queryGeometries: [] }
-    }
-
     const graphics = await retrievePopupFeatures(
-      jimuMapView.mapComponent,
+      (jimuMapView as any).mapComponent ?? jimuMapView.view,
       input.hitTarget,
       input.pointerType ?? "mouse",
       onProgress,
+      jimuMapView.view,
+      input.geometries[0],
     )
     return { graphics, queryGeometries: input.geometries }
   }
