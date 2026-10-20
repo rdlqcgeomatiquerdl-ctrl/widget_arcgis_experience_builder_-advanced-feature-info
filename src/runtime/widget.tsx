@@ -1,3 +1,6 @@
+/** @jsxRuntime classic */
+/** @jsx React.createElement */
+/** @jsxFrag React.Fragment */
 import { React, type AllWidgetProps, MutableStoreManager } from "jimu-core"
 import { JimuMapViewComponent, type JimuMapView } from "jimu-arcgis"
 

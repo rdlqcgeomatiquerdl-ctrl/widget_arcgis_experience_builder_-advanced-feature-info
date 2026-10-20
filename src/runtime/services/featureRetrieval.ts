@@ -1,6 +1,6 @@
 import Graphic from "@arcgis/core/Graphic";
 import { fromJSON as geometryFromJSON } from "@arcgis/core/geometry/support/jsonUtils";
-import * as bufferOperator from "@arcgis/core/geometry/operators/bufferOperator";
+import * as geometryEngine from "@arcgis/core/geometry/geometryEngine";
 import type { JimuMapView } from "jimu-arcgis";
 
 const normalizeUrl = (url?: string): string =>
@@ -205,18 +205,38 @@ export const retrievePopupFeatures = async (
   pointerType: any = "mouse",
   onProgress?: (graphics: any[]) => void,
 ): Promise<any[]> => {
-  const graphicGenerator = await mapComponent.fetchPopupFeatures(hitTarget, {
-    pointerType,
-  });
+  if (typeof mapComponent?.fetchPopupFeatures === "function") {
+    const graphicGenerator = await mapComponent.fetchPopupFeatures(hitTarget, {
+      pointerType,
+    });
 
-  const graphics: any[] = [];
+    const graphics: any[] = [];
 
-  for await (const graphic of graphicGenerator) {
-    graphics.push(graphic);
-    onProgress?.(graphics.slice());
+    for await (const graphic of graphicGenerator) {
+      graphics.push(graphic);
+      onProgress?.(graphics.slice());
+    }
+
+    return graphics;
   }
 
-  return graphics;
+  if (typeof mapComponent?.popup?.fetchFeatures === "function") {
+    const response = await mapComponent.popup.fetchFeatures(hitTarget);
+    const graphics = (await response?.allGraphicsPromise) ?? [];
+    if (graphics.length > 0) {
+      onProgress?.(graphics);
+    }
+    return graphics;
+  }
+
+  if (typeof mapComponent?.toMap === "function") {
+    const mapPoint = mapComponent.toMap(hitTarget);
+    if (mapPoint) {
+      return retrieveSpatialFeatures(mapComponent, mapPoint, onProgress);
+    }
+  }
+
+  return [];
 };
 
 // Retrieve popup-enabled features intersecting a geometry (or array of geometries)
@@ -231,10 +251,14 @@ export const retrieveSpatialFeatures = async (
 
   if (geometry?.type === "point" && !geometry?.spatialReference?.isGeographic) {
     try {
+      const buffered = geometryEngine.buffer(
+        geometry,
+        POINT_TOLERANCE_FEET,
+        "feet",
+        false,
+      );
       queryGeometry =
-        bufferOperator.execute(geometry, POINT_TOLERANCE_FEET, {
-          unit: "feet",
-        }) ?? geometry;
+        (Array.isArray(buffered) ? buffered[0] : buffered) ?? geometry;
     } catch (error) {
       console.warn("Point tolerance buffer error:", error);
     }

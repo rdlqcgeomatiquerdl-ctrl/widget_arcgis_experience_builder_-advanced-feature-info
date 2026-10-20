@@ -1,7 +1,7 @@
 import type { JimuMapView } from "jimu-arcgis"
 import type Graphic from "@arcgis/core/Graphic"
 import type Geometry from "@arcgis/core/geometry/Geometry"
-import * as unionOperator from "@arcgis/core/geometry/operators/unionOperator"
+import * as geometryEngine from "@arcgis/core/geometry/geometryEngine"
 
 import { createInwardBuffer } from "../utils/geometryUtils"
 import { deduplicateGraphics, retrieveSpatialFeatures } from "./featureRetrieval"
@@ -60,7 +60,7 @@ export const retrieveFeaturesFromGeometryInput = async (
       unionedQueryGeometries.push(group[0])
     } else {
       try {
-        const unioned = unionOperator.executeMany(group as any)
+        const unioned = geometryEngine.union(group as any[])
         if (unioned) {
           unionedQueryGeometries.push(unioned as Geometry)
         } else {

@@ -1,3 +1,6 @@
+/** @jsxRuntime classic */
+/** @jsx React.createElement */
+/** @jsxFrag React.Fragment */
 import { React } from "jimu-core"
 import type { AllWidgetSettingProps } from "jimu-for-builder"
 import {

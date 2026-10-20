@@ -1,8 +1,49 @@
+/** @jsxRuntime classic */
+/** @jsx React.createElement */
+/** @jsxFrag React.Fragment */
 import { React } from "jimu-core"
+import Feature from "@arcgis/core/widgets/Feature"
 import { groupPopupFeatures } from "../utils/groupFeatures"
 import { DEFAULT_SELECTION_COLOR, toCssRgba } from "../utils/mapGraphics"
 
-const { useState } = React
+const { useState, useEffect, useRef } = React
+
+// Renders a Graphic's PopupTemplate using the standard ArcGIS JS API Feature widget
+// (compatible with both ArcGIS Enterprise 11.x / JS API 4.x and Experience Builder 1.21 / JS API 5.x)
+const FeatureContent = ({ graphic }: { graphic: any }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el || !graphic) return
+
+    el.innerHTML = ""
+    const div = document.createElement("div")
+    el.appendChild(div)
+
+    let widget: Feature | null = null
+    try {
+      widget = new Feature({
+        container: div,
+        graphic,
+        map: graphic.layer?.parent ?? undefined,
+        spatialReference: graphic.geometry?.spatialReference ?? undefined,
+      })
+    } catch (err) {
+      console.warn("Feature widget render fallback:", err)
+    }
+
+    return () => {
+      try {
+        widget?.destroy()
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }, [graphic])
+
+  return <div ref={containerRef} style={{ whiteSpace: "pre-wrap" }} />
+}
 
 interface FeatureResultsPanelProps {
   popupFeatures: any[]
@@ -45,7 +86,7 @@ const FeatureResultsPanel = ({
 
   // Add padding to Calcite's section header inside its shadow root
   const styleSectionHeader = async (section: any) => {
-    if (!section) return
+    if (!section || typeof section.componentOnReady !== "function") return
 
     await section.componentOnReady()
 
@@ -106,6 +147,7 @@ const FeatureResultsPanel = ({
               id="toggle-all-sections"
               icon={allSectionsExpanded ? "chevrons-up" : "chevrons-down"}
               text={toggleAllLabel}
+              title={toggleAllLabel}
               style={
                 {
                   "--calcite-color-focus": "transparent",
@@ -126,6 +168,7 @@ const FeatureResultsPanel = ({
               id="selection-action-switch"
               icon="enable-disable-feature-selection"
               text={selectionLabel}
+              title={selectionLabel}
               style={
                 {
                   "--calcite-color-focus": "transparent",
@@ -149,6 +192,7 @@ const FeatureResultsPanel = ({
               id="clear-results-action"
               icon="trash"
               text="Effacer tous les résultats"
+              title="Effacer tous les résultats"
               onClick={onClearResults}
             />
             <calcite-tooltip
@@ -197,6 +241,7 @@ const FeatureResultsPanel = ({
                 return (
                   <calcite-block
                     key={`${groupTitle}-${leafTitle}-${index}`}
+                    heading={leafTitle}
                     label={leafTitle}
                     expanded
                     style={
@@ -213,10 +258,7 @@ const FeatureResultsPanel = ({
                     }
                     onClick={() => onFeatureClick(graphic)}
                   >
-                    <arcgis-feature
-                      graphic={graphic}
-                      style={{ whiteSpace: "pre-wrap" }}
-                    ></arcgis-feature>
+                    <FeatureContent graphic={graphic} />
                   </calcite-block>
                 )
               })}
