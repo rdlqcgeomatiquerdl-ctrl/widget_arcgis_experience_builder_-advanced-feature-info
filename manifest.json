@@ -1,0 +1,29 @@
+{
+  "name": "advanced-feature-info",
+  "label": "Advanced Feature Info",
+  "type": "widget",
+  "version": "1.1.0",
+  "exbVersion": "1.15.0",
+  "lastUpdated": "2026-10-20",
+  "author": "Wei Liu (weiliu-gis)",
+  "description": "Affiche les informations contextuelles pour plusieurs entités identifiées par clic sur la carte ou sélection depuis d'autres widgets Experience Builder. Basé sur weiliu-gis/advanced-feature-info (https://github.com/weiliu-gis/advanced-feature-info).",
+  "copyright": "Wei Liu (weiliu-gis) - https://github.com/weiliu-gis/advanced-feature-info",
+  "license": "https://github.com/weiliu-gis/advanced-feature-info",
+  "properties": {
+    "hasSettingPage": true,
+    "hasConfig": true
+  },
+  "dependency": ["jimu-arcgis"],
+  "translatedLocales": ["fr", "en"],
+  "defaultSize": {
+    "width": 400,
+    "height": 300
+  },
+  "messageActions": [
+    {
+      "name": "unified-selection",
+      "label": "Afficher les informations sur les entités",
+      "uri": "actions/unified-selection-action"
+    }
+  ]
+}
